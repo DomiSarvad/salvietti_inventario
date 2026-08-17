@@ -3,10 +3,10 @@
 
 ## 📋 Requisitos Previos
 
-- PHP 8.1 o superior
-- MySQL 8.0 o superior
-- Composer
-- Node.js 14+ (opcional)
+- Flutter SDK
+- Dart SDK
+- Cuenta de Supabase activa
+- PostgreSQL 15+ (gestionado por Supabase)
 - Git
 
 ## 🚀 Pasos de Instalación
@@ -25,97 +25,71 @@ composer install
 
 ### 3. Configurar Variables de Entorno
 
-```bash
-copy .env.example .env
+Crea un archivo `.env` en la raíz del proyecto Flutter con:
+
+```env
+SUPABASE_URL=https://tu-proyecto.supabase.co
+SUPABASE_ANON_KEY=tu_clave_anonima
 ```
 
-Editar `.env` y configurar:
-```
-APP_NAME="Sistema Salvietti"
-APP_ENV=local
-APP_KEY=base64:TuClaveAqui
-APP_DEBUG=true
-APP_URL=http://localhost:8000
+### 4. Crear la base de datos en Supabase
 
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=salvietti_db
-DB_USERNAME=root
-DB_PASSWORD=TuContraseña
-```
-
-### 4. Generar Clave de Aplicación
+Importa el script SQL de PostgreSQL ubicado en:
 
 ```bash
-php artisan key:generate
+database/salvietti.sql
 ```
 
-### 5. Crear Base de Datos MySQL
+Esto crea las tablas del proyecto, el trigger para sincronizar `auth.users` y la estructura base del inventario.
 
-#### Opción A: Usando MySQL CLI
+### 5. Crear usuarios reales en Supabase Auth
+
+Desde el panel de Supabase, crea los usuarios de acceso con los emails que se usarán en la app:
+
+- gerente@salvietti.com
+- jefe@salvietti.com
+- almacen@salvietti.com
+
+La tabla `public.usuarios` se sincroniza automáticamente con `auth.users` mediante el trigger incluido en el script.
+
+### 6. Ejecutar la app
 
 ```bash
-mysql -u root -p
-CREATE DATABASE salvietti_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-exit;
+flutter pub get
+flutter run -d windows
 ```
 
-#### Opción B: Ejecutar Script SQL
+O para Android:
 
 ```bash
-mysql -u root -p salvietti_db < database/salvietti.sql
+flutter run -d android
 ```
 
-### 6. Ejecutar Migraciones (si usas Laravel)
+### 7. Verificar flujo de login
 
-```bash
-php artisan migrate
-php artisan db:seed
-```
-
-### 7. Dar Permisos a Carpetas
-
-En Windows (PowerShell como admin):
-```powershell
-# Si es necesario, dar permisos a storage
-icacls "C:\Users\HP\Desktop\Trabajos\CCA 2026\Salvietti\sistema\storage" /grant Users:F /T
-```
-
-### 8. Iniciar Servidor de Desarrollo
-
-```bash
-php artisan serve
-```
-
-La aplicación estará disponible en: `http://localhost:8000`
+La app debe iniciar sesión con las credenciales creadas en Supabase Auth y no depender de una tabla MySQL local.
 
 ---
 
 ## 🗄️ Estructura de Base de Datos
 
-La base de datos incluye las siguientes tablas principales:
+La base de datos del proyecto queda en Supabase/PostgreSQL y mantiene la lógica del inventario empresarial.
 
 ### Gestión de Usuarios
-- `usuarios` - Usuarios del sistema con roles
-- `empleados` - Información de empleados
+- `public.usuarios` - Perfil del usuario vinculado a `auth.users`
+- `public.auditoria` - Registro de eventos del sistema
 
 ### Inventario
-- `insumos` - Catálogo de materias primas
-- `lotes` - Lotes con fecha de vencimiento
-- `movimientos_inventario` - Histórico de movimientos
+- `public.insumos_materias_primas` - Catálogo de materias primas con stock
+- `public.movimientos_inventario` - Histórico de movimientos
+- `public.bitacora_inventario` - Registro detallado de operaciones
 
 ### Proveedores
-- `proveedores` - Información de proveedores
+- `public.proveedores` - Proveedores de insumos
 
-### Producción
-- `ordenes_produccion` - Órdenes de producción
-- `detalles_consumo` - Consumos por orden
-
-### Sistema
-- `alertas` - Alertas del sistema
-- `salidas_insumo` - Registro de salidas
-- `sincronizador_offline` - Control de sincronización
+### Producción y análisis
+- `public.consumo_semanal` - Datos para dashboard ejecutivo
+- `public.vista_insumos_estado` - Vista resumida de stock
 
 ---
 
@@ -149,27 +123,16 @@ Los colores corporativos están configurados en:
 
 ---
 
-## 🔧 Configuración en MySQL Workbench
-
-### Crear conexión en Workbench:
-
-1. Abrir MySQL Workbench
-2. Click en `+` para nueva conexión
-3. Configurar:
-   - **Connection Name**: Salvietti
-   - **Hostname**: 127.0.0.1
-   - **Port**: 3306
-   - **Username**: root
-   - **Password**: (tu contraseña)
-
-4. Test Connection
-5. Doble-click para conectar
+## 🔧 Configuración en Supabase SQL Editor
 
 ### Importar esquema:
 
-1. Ir a: File > Import SQL Script
-2. Seleccionar: `database/salvietti.sql`
-3. Ejecutar
+1. Abre tu proyecto de Supabase.
+2. Entra a SQL Editor.
+3. Selecciona `database/salvietti.sql`.
+4. Ejecuta el script.
+
+Esto creará las tablas, índices y el trigger de sincronización con `auth.users`.
 
 ---
 

@@ -1,331 +1,362 @@
 -- ============================================================
--- BASE DE DATOS: salvietti_db
+-- BASE DE DATOS: Salvietti en Supabase (PostgreSQL)
 -- Sistema de Gestión de Inventario - Salvietti
 -- ============================================================
+CREATE SCHEMA IF NOT EXISTS public;
 
--- Crear base de datos
-CREATE DATABASE IF NOT EXISTS salvietti_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE salvietti_db;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO public;
+GRANT ALL ON SCHEMA public TO anon;
+GRANT ALL ON SCHEMA public TO authenticated;
+GRANT ALL ON SCHEMA public TO service_role;
 
--- ============================================================
--- TABLA: usuarios
--- Usuarios del sistema con roles
--- ============================================================
-CREATE TABLE IF NOT EXISTS usuarios (
-    id_usuario INT PRIMARY KEY AUTO_INCREMENT,
-    nombre VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    contrasena VARCHAR(255) NOT NULL,
-    rol ENUM('gerente', 'jefe_produccion', 'encargado_almacen', 'encargado_jarabes') NOT NULL,
-    empresa VARCHAR(255),
-    telefono VARCHAR(20),
-    estado BOOLEAN DEFAULT TRUE,
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-    ultimo_login DATETIME,
-    INDEX idx_email (email),
-    INDEX idx_rol (rol)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create extension if not exists pgcrypto;
 
 -- ============================================================
--- TABLA: empleados
--- Información de empleados
+-- TABLA: public.usuarios
+-- Usuarios del sistema dentro de la aplicación. No se usa Auth.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS empleados (
-    id_empleado INT PRIMARY KEY AUTO_INCREMENT,
-    nombre_empleado VARCHAR(255) NOT NULL,
-    cargo VARCHAR(255),
-    telefono_trabajo VARCHAR(20),
-    id_usuario INT UNIQUE,
-    fecha_contratacion DATE,
-    estado BOOLEAN DEFAULT TRUE,
-    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
-    INDEX idx_nombre (nombre_empleado)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.usuarios (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  password_hash text not null,
+  nombre text not null default 'Usuario',
+  rol text not null default 'encargado_almacen'
+    check (rol in ('gerente', 'jefe_produccion', 'encargado_almacen', 'encargado_jarabes')),
+  empresa text,
+  telefono text,
+  estado boolean not null default true,
+  foto_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_usuarios_email on public.usuarios(email);
+create index if not exists idx_usuarios_rol on public.usuarios(rol, estado);
 
 -- ============================================================
--- TABLA: proveedores
--- Información de proveedores
+-- TABLA: public.proveedores
 -- ============================================================
-CREATE TABLE IF NOT EXISTS proveedores (
-    id_proveedor INT PRIMARY KEY AUTO_INCREMENT,
-    nombre_proveedor VARCHAR(255) NOT NULL,
-    nit VARCHAR(20) UNIQUE,
-    contacto_nombre VARCHAR(255),
-    contacto_telefono VARCHAR(20),
-    telefono_general VARCHAR(20),
-    correo_electronico VARCHAR(255),
-    ciudad VARCHAR(100),
-    direccion TEXT,
-    estado BOOLEAN DEFAULT TRUE,
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_nombre (nombre_proveedor),
-    INDEX idx_nit (nit)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.proveedores (
+  id uuid primary key default gen_random_uuid(),
+  nombre_empresa text not null,
+  ruc text unique,
+  contacto text,
+  telefono text,
+  correo text,
+  catalogo_insumos text,
+  activo boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_proveedores_nombre on public.proveedores(nombre_empresa);
 
 -- ============================================================
--- TABLA: insumos
--- Catálogo de insumos y materias primas
+-- TABLA: public.insumos_materias_primas
 -- ============================================================
-CREATE TABLE IF NOT EXISTS insumos (
-    id_insumo INT PRIMARY KEY AUTO_INCREMENT,
-    nombre VARCHAR(255) NOT NULL,
-    unidad_medida VARCHAR(50) NOT NULL,
-    stock_actual DECIMAL(10, 2) NOT NULL DEFAULT 0,
-    stock_minimo DECIMAL(10, 2) NOT NULL,
-    ubicacion_almacen VARCHAR(100),
-    estado BOOLEAN DEFAULT TRUE,
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY unique_nombre (nombre),
-    INDEX idx_nombre (nombre),
-    INDEX idx_stock (stock_actual)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.insumos_materias_primas (
+  id uuid primary key default gen_random_uuid(),
+  nombre text not null unique,
+  descripcion text,
+  stock_actual numeric(12,2) not null default 0,
+  cantidad_minima numeric(12,2) not null default 0,
+  unidad_medida text not null default 'kg',
+  proveedor_id uuid references public.proveedores(id) on delete set null,
+  proveedor_nombre text,
+  numero_lote text,
+  fecha_vencimiento date,
+  ultimo_movimiento timestamptz,
+  activo boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_insumos_stock on public.insumos_materias_primas(stock_actual);
 
 -- ============================================================
--- TABLA: lotes
--- Lotes de insumos con fecha de vencimiento
+-- TABLA: public.movimientos_inventario
 -- ============================================================
-CREATE TABLE IF NOT EXISTS lotes (
-    id_lote INT PRIMARY KEY AUTO_INCREMENT,
-    codigo_lote VARCHAR(100) NOT NULL UNIQUE,
-    id_insumo INT NOT NULL,
-    cantidad DECIMAL(10, 2) NOT NULL,
-    cantidad_consumida DECIMAL(10, 2) DEFAULT 0,
-    id_proveedor INT,
-    fecha_recepcion DATE,
-    fecha_vencimiento DATE,
-    estado ENUM('valido', 'proximo_a_vencer', 'vencido') DEFAULT 'valido',
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (id_insumo) REFERENCES insumos(id_insumo) ON DELETE CASCADE,
-    FOREIGN KEY (id_proveedor) REFERENCES proveedores(id_proveedor) ON DELETE SET NULL,
-    INDEX idx_codigo (codigo_lote),
-    INDEX idx_insumo (id_insumo),
-    INDEX idx_fecha_venc (fecha_vencimiento)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.movimientos_inventario (
+  id uuid primary key default gen_random_uuid(),
+  insumo_id uuid references public.insumos_materias_primas(id) on delete cascade,
+  usuario_id uuid references public.usuarios(id) on delete set null,
+  tipo text not null check (tipo in ('entrada', 'salida', 'consumo', 'borrado_logico')),
+  cantidad numeric(12,2) not null default 0,
+  stock_anterior numeric(12,2),
+  stock_resultante numeric(12,2),
+  detalle jsonb default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  sincronizado boolean not null default false
+);
+
+create index if not exists idx_movimientos_tipo on public.movimientos_inventario(tipo, created_at);
+create index if not exists idx_movimientos_insumo on public.movimientos_inventario(insumo_id, created_at);
 
 -- ============================================================
--- TABLA: movimientos_inventario
--- Registro de todos los movimientos
+-- TABLA: public.bitacora_inventario
 -- ============================================================
-CREATE TABLE IF NOT EXISTS movimientos_inventario (
-    id_movimiento INT PRIMARY KEY AUTO_INCREMENT,
-    id_insumo INT NOT NULL,
-    tipo ENUM('entrada', 'salida', 'consumo') NOT NULL,
-    cantidad DECIMAL(10, 2) NOT NULL,
-    id_lote INT,
-    id_empleado INT,
-    fecha_movimiento DATETIME DEFAULT CURRENT_TIMESTAMP,
-    nota TEXT,
-    sincronizado BOOLEAN DEFAULT FALSE,
-    FOREIGN KEY (id_insumo) REFERENCES insumos(id_insumo) ON DELETE CASCADE,
-    FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
-    FOREIGN KEY (id_empleado) REFERENCES empleados(id_empleado) ON DELETE SET NULL,
-    INDEX idx_tipo (tipo),
-    INDEX idx_fecha (fecha_movimiento),
-    INDEX idx_insumo (id_insumo)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.bitacora_inventario (
+  id uuid primary key default gen_random_uuid(),
+  usuario_id uuid references public.usuarios(id) on delete set null,
+  evento text not null,
+  tipo text not null,
+  insumo_id uuid references public.insumos_materias_primas(id) on delete set null,
+  insumo_nombre text,
+  cantidad numeric(12,2) not null default 0,
+  detalle jsonb default '{}'::jsonb,
+  timestamp timestamptz not null default now(),
+  sincronizado boolean not null default true,
+  activo boolean not null default true
+);
+
+create index if not exists idx_bitacora_tipo on public.bitacora_inventario(tipo, timestamp);
 
 -- ============================================================
--- TABLA: entradas_insumo
--- Registro de entradas de insumos
+-- TABLA: public.auditoria
 -- ============================================================
-CREATE TABLE IF NOT EXISTS entradas_insumo (
-    id_entrada INT PRIMARY KEY AUTO_INCREMENT,
-    id_lote INT NOT NULL,
-    factura VARCHAR(100),
-    nota_entrega VARCHAR(255),
-    cantidad_recibida DECIMAL(10, 2) NOT NULL,
-    estado ENUM('confirmada', 'pendiente') DEFAULT 'pendiente',
-    fecha_entrada DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE CASCADE,
-    INDEX idx_lote (id_lote),
-    INDEX idx_fecha (fecha_entrada)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.auditoria (
+  id uuid primary key default gen_random_uuid(),
+  usuario_id uuid references public.usuarios(id) on delete set null,
+  evento text not null,
+  timestamp timestamptz not null default now(),
+  activo boolean not null default true
+);
 
 -- ============================================================
--- TABLA: ordenes_produccion
--- Órdenes de producción
+-- TABLA: public.consumo_semanal
 -- ============================================================
-CREATE TABLE IF NOT EXISTS ordenes_produccion (
-    id_orden INT PRIMARY KEY AUTO_INCREMENT,
-    codigo_orden VARCHAR(100) NOT NULL UNIQUE,
-    producto VARCHAR(255),
-    cantidad_producida DECIMAL(10, 2),
-    estado ENUM('activa', 'completada', 'cancelada') DEFAULT 'activa',
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-    fecha_finalizacion DATE,
-    INDEX idx_codigo (codigo_orden),
-    INDEX idx_estado (estado)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create table if not exists public.consumo_semanal (
+  id uuid primary key default gen_random_uuid(),
+  dia integer not null unique check (dia between 1 and 7),
+  valor numeric(12,2) not null default 0,
+  created_at timestamptz not null default now()
+);
 
 -- ============================================================
--- TABLA: detalles_consumo
--- Detalle de consumo por orden de producción
+-- SEGURIDAD: RLS
+-- Nota: como no usamos Supabase Auth, las políticas se dejan simples.
+-- Para producción real conviene mover el login a un backend o edge function.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS detalles_consumo (
-    id_detalle INT PRIMARY KEY AUTO_INCREMENT,
-    id_movimiento INT NOT NULL,
-    id_orden INT NOT NULL,
-    cantidad_consumida DECIMAL(10, 2) NOT NULL,
-    costo_consumo DECIMAL(12, 2),
-    FOREIGN KEY (id_movimiento) REFERENCES movimientos_inventario(id_movimiento) ON DELETE CASCADE,
-    FOREIGN KEY (id_orden) REFERENCES ordenes_produccion(id_orden) ON DELETE CASCADE,
-    INDEX idx_orden (id_orden)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+alter table public.usuarios enable row level security;
+alter table public.proveedores enable row level security;
+alter table public.insumos_materias_primas enable row level security;
+alter table public.movimientos_inventario enable row level security;
+alter table public.bitacora_inventario enable row level security;
+alter table public.auditoria enable row level security;
+alter table public.consumo_semanal enable row level security;
+
+drop policy if exists "usuarios_read_all" on public.usuarios;
+create policy "usuarios_read_all" on public.usuarios for select using (true);
+
+drop policy if exists "usuarios_write_all" on public.usuarios;
+create policy "usuarios_write_all" on public.usuarios for insert with check (true);
+
+drop policy if exists "usuarios_update_all" on public.usuarios;
+create policy "usuarios_update_all" on public.usuarios for update using (true) with check (true);
+
+drop policy if exists "proveedores_read_all" on public.proveedores;
+create policy "proveedores_read_all" on public.proveedores for select using (true);
+
+drop policy if exists "proveedores_write_all" on public.proveedores;
+create policy "proveedores_write_all" on public.proveedores for insert with check (true);
+
+drop policy if exists "proveedores_update_all" on public.proveedores;
+create policy "proveedores_update_all" on public.proveedores for update using (true) with check (true);
+
+drop policy if exists "insumos_read_all" on public.insumos_materias_primas;
+create policy "insumos_read_all" on public.insumos_materias_primas for select using (true);
+
+drop policy if exists "insumos_write_all" on public.insumos_materias_primas;
+create policy "insumos_write_all" on public.insumos_materias_primas for insert with check (true);
+
+drop policy if exists "insumos_update_all" on public.insumos_materias_primas;
+create policy "insumos_update_all" on public.insumos_materias_primas for update using (true) with check (true);
+
+drop policy if exists "movimientos_read_all" on public.movimientos_inventario;
+create policy "movimientos_read_all" on public.movimientos_inventario for select using (true);
+
+drop policy if exists "movimientos_write_all" on public.movimientos_inventario;
+create policy "movimientos_write_all" on public.movimientos_inventario for insert with check (true);
+
+drop policy if exists "movimientos_update_all" on public.movimientos_inventario;
+create policy "movimientos_update_all" on public.movimientos_inventario for update using (true) with check (true);
+
+drop policy if exists "bitacora_read_all" on public.bitacora_inventario;
+create policy "bitacora_read_all" on public.bitacora_inventario for select using (true);
+
+drop policy if exists "bitacora_write_all" on public.bitacora_inventario;
+create policy "bitacora_write_all" on public.bitacora_inventario for insert with check (true);
+
+drop policy if exists "auditoria_read_all" on public.auditoria;
+create policy "auditoria_read_all" on public.auditoria for select using (true);
+
+drop policy if exists "auditoria_write_all" on public.auditoria;
+create policy "auditoria_write_all" on public.auditoria for insert with check (true);
+
+drop policy if exists "consumo_read_all" on public.consumo_semanal;
+create policy "consumo_read_all" on public.consumo_semanal for select using (true);
+
+drop policy if exists "consumo_write_all" on public.consumo_semanal;
+create policy "consumo_write_all" on public.consumo_semanal for insert with check (true);
 
 -- ============================================================
--- TABLA: alertas
--- Sistema de alertas
+-- TRIGGER: updated_at
 -- ============================================================
-CREATE TABLE IF NOT EXISTS alertas (
-    id_alerta INT PRIMARY KEY AUTO_INCREMENT,
-    tipo ENUM('stock_minimo', 'vencimiento', 'critico') NOT NULL,
-    id_insumo INT,
-    id_lote INT,
-    mensaje TEXT NOT NULL,
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-    leida BOOLEAN DEFAULT FALSE,
-    id_usuario INT,
-    FOREIGN KEY (id_insumo) REFERENCES insumos(id_insumo) ON DELETE CASCADE,
-    FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE CASCADE,
-    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
-    INDEX idx_tipo (tipo),
-    INDEX idx_fecha (fecha_creacion),
-    INDEX idx_usuario (id_usuario)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_usuarios_updated_at on public.usuarios;
+create trigger trg_usuarios_updated_at
+before update on public.usuarios
+for each row execute function public.set_updated_at();
 
 -- ============================================================
--- TABLA: salidas_insumo
--- Registro de salidas de insumos
+-- FUNCION DE LOGIN DENTRO DEL SISTEMA
+-- Valida email + password usando bcrypt/pgcrypto.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS salidas_insumo (
-    id_salida INT PRIMARY KEY AUTO_INCREMENT,
-    id_insumo INT NOT NULL,
-    area_destino VARCHAR(100),
-    cantidad DECIMAL(10, 2) NOT NULL,
-    fecha_salida DATETIME DEFAULT CURRENT_TIMESTAMP,
-    id_usuario INT,
-    confirmada BOOLEAN DEFAULT FALSE,
-    FOREIGN KEY (id_insumo) REFERENCES insumos(id_insumo) ON DELETE CASCADE,
-    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
-    INDEX idx_fecha (fecha_salida),
-    INDEX idx_insumo (id_insumo)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+create or replace function public.login_usuario(p_email text, p_password text)
+returns table (
+  id uuid,
+  email text,
+  nombre text,
+  rol text,
+  estado boolean,
+  empresa text,
+  telefono text,
+  foto_url text
+)
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  select
+    u.id,
+    u.email,
+    u.nombre,
+    u.rol,
+    u.estado,
+    u.empresa,
+    u.telefono,
+    u.foto_url
+  from public.usuarios u
+  where lower(trim(u.email)) = lower(trim(p_email))
+    and u.estado = true
+    and u.password_hash = crypt(p_password, u.password_hash)
+  limit 1;
+end;
+$$;
 
--- ============================================================
--- TABLA: sincronizador_offline
--- Datos pendientes de sincronización
--- ============================================================
-CREATE TABLE IF NOT EXISTS sincronizador_offline (
-    id_sincronizacion INT PRIMARY KEY AUTO_INCREMENT,
-    cola_pendientes JSON,
-    estado_red BOOLEAN,
-    ultima_sincronizacion DATETIME,
-    INDEX idx_estado (estado_red)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ============================================================
--- TABLA: dashboard
--- Datos del dashboard ejecutivo
--- ============================================================
-CREATE TABLE IF NOT EXISTS dashboard (
-    id_dashboard INT PRIMARY KEY AUTO_INCREMENT,
-    fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_fecha (fecha_actualizacion)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ============================================================
--- ÍNDICES DE RENDIMIENTO
--- ============================================================
-
--- Crear índices compuestos para búsquedas comunes
-CREATE INDEX idx_insumo_fecha ON movimientos_inventario(id_insumo, fecha_movimiento);
-CREATE INDEX idx_lote_insumo ON lotes(id_insumo, fecha_vencimiento);
-CREATE INDEX idx_usuario_rol ON usuarios(rol, estado);
+grant execute on function public.login_usuario(text, text) to anon;
+grant execute on function public.login_usuario(text, text) to authenticated;
 
 -- ============================================================
--- INSERTAR DATOS DE PRUEBA
+-- USUARIO BASE DEL SISTEMA
 -- ============================================================
-
--- Usuario de prueba
-INSERT INTO usuarios (nombre, email, contrasena, rol, empresa, telefono, estado) VALUES
-('Gerente Sistema', 'gerente@salvietti.com', '$2y$10$hash_bcrypt_aqui', 'gerente', 'Salvietti', '1234567890', TRUE),
-('Jefe Producción', 'jefe@salvietti.com', '$2y$10$hash_bcrypt_aqui', 'jefe_produccion', 'Salvietti', '0987654321', TRUE),
-('Almacén', 'almacen@salvietti.com', '$2y$10$hash_bcrypt_aqui', 'encargado_almacen', 'Salvietti', '1111111111', TRUE);
-
--- Proveedores de prueba
-INSERT INTO proveedores (nombre_proveedor, nit, contacto_nombre, contacto_email, telefono_general, estado) VALUES
-('Proveedor A', '123456789', 'Juan Pérez', 'juan@proveedora.com', '5551234567', TRUE),
-('Proveedor B', '987654321', 'María García', 'maria@proveedorb.com', '5559876543', TRUE);
-
--- Insumos de prueba (TAPAS)
-INSERT INTO insumos (nombre, unidad_medida, stock_minimo, ubicacion_almacen) VALUES
-('Tapa Short 32oz', 'unidad', 500, 'TAPAS-A1'),
-('Tapa Pet 16oz', 'unidad', 300, 'TAPAS-A2'),
-('Tapa Pet 24oz', 'unidad', 400, 'TAPAS-A3');
-
--- Insumos de prueba (PREFORMAS)
-INSERT INTO insumos (nombre, unidad_medida, stock_minimo, ubicacion_almacen) VALUES
-('Preforma 32oz', 'unidad', 1000, 'PREFORMAS-B1'),
-('Preforma 24oz', 'unidad', 800, 'PREFORMAS-B2'),
-('Preforma 20oz', 'unidad', 600, 'PREFORMAS-B3');
+insert into public.usuarios (
+  email,
+  password_hash,
+  nombre,
+  rol,
+  estado,
+  empresa,
+  telefono
+)
+values (
+  'gerente@salvietti.com',
+  crypt('12345678', gen_salt('bf')),
+  'Gerente',
+  'gerente',
+  true,
+  'Salvietti',
+  '+591 00000000'
+)
+on conflict (email) do update set
+  password_hash = excluded.password_hash,
+  nombre = excluded.nombre,
+  rol = excluded.rol,
+  estado = true,
+  empresa = excluded.empresa,
+  telefono = excluded.telefono,
+  updated_at = now();
 
 -- ============================================================
--- VISTAS ÚTILES
+-- DATOS DE PRUEBA
 -- ============================================================
+insert into public.proveedores (nombre_empresa, ruc, contacto, telefono, correo, catalogo_insumos, activo)
+values
+  ('Productos Andinos S.A.', '123456789', 'Juan Pérez', '+591 7654321', 'juan@productosandinos.com', 'Catálogo principal 2025', true),
+  ('Packaging Solutions Ltd.', '987654321', 'María García', '+591 2345678', 'maria@packagingsol.com', 'Catálogo de envases', true),
+  ('Insumos Nacionales E.I.R.L.', '456789012', 'Carlos López', '+591 3456789', 'carlos@insumosna.com', 'Catálogo complementario', true)
+on conflict (ruc) do nothing;
 
--- Vista de insumos con estado actual
-CREATE VIEW vista_insumos_estado AS
-SELECT 
-    i.id_insumo,
-    i.nombre,
-    i.unidad_medida,
-    i.stock_actual,
-    i.stock_minimo,
-    CASE 
-        WHEN i.stock_actual < i.stock_minimo THEN 'critico'
-        WHEN i.stock_actual < (i.stock_minimo * 1.5) THEN 'bajo'
-        ELSE 'normal'
-    END AS estado,
-    CASE 
-        WHEN i.stock_actual < i.stock_minimo THEN 'rojo'
-        WHEN i.stock_actual < (i.stock_minimo * 1.5) THEN 'amarillo'
-        ELSE 'verde'
-    END AS indicador
-FROM insumos i
-WHERE i.estado = TRUE;
+insert into public.insumos_materias_primas (nombre, descripcion, stock_actual, cantidad_minima, unidad_medida, proveedor_nombre, activo)
+values
+  ('Tapa Short 32oz', 'Tapa corta negra para envase de 32oz con rosca estándar', 1200, 500, 'unidad', 'Productos Andinos S.A.', true),
+  ('Tapa Pet 16oz', 'Tapa de polietileno tereftalato para botellas 16oz con cierre hermético', 900, 300, 'unidad', 'Productos Andinos S.A.', true),
+  ('Tapa Pet 24oz', 'Tapa transparente con precinto de seguridad para 24oz', 1100, 400, 'unidad', 'Productos Andinos S.A.', true),
+  ('Preforma 32oz', 'Preforma de PET 32oz grado alimentario para bebidas frías', 1500, 1000, 'unidad', 'Packaging Solutions Ltd.', true),
+  ('Preforma 24oz', 'Preforma de PET 24oz alta resistencia certificada', 1100, 800, 'unidad', 'Packaging Solutions Ltd.', true),
+  ('Preforma 20oz', 'Preforma de PET 20oz para bebidas de baja carbonatación', 850, 600, 'unidad', 'Packaging Solutions Ltd.', true),
+  ('Etiqueta Full Print', 'Etiqueta adhesiva full color con laminado satinado 300x150mm', 2500, 1000, 'rollo', 'Insumos Nacionales E.I.R.L.', true),
+  ('Tapa Flip 500ml', 'Tapa de volteo para botellas de 500ml bebidas deportivas', 600, 250, 'unidad', 'Insumos Nacionales E.I.R.L.', true)
+on conflict (nombre) do nothing;
 
--- Vista de movimientos por período
-CREATE VIEW vista_movimientos_periodo AS
-SELECT 
-    DATE(m.fecha_movimiento) AS fecha,
-    m.tipo,
-    COUNT(*) AS total_movimientos,
-    SUM(m.cantidad) AS cantidad_total,
-    i.nombre AS insumo
-FROM movimientos_inventario m
-JOIN insumos i ON m.id_insumo = i.id_insumo
-GROUP BY DATE(m.fecha_movimiento), m.tipo, i.id_insumo;
+insert into public.consumo_semanal (dia, valor)
+values
+  (1, 3.0),
+  (2, 5.2),
+  (3, 4.5),
+  (4, 6.0),
+  (5, 4.8),
+  (6, 5.0),
+  (7, 3.3)
+on conflict (dia) do update set
+  valor = excluded.valor,
+  created_at = now();
 
--- Vista de lotes por vencer
-CREATE VIEW vista_lotes_vencer AS
-SELECT 
-    l.id_lote,
-    l.codigo_lote,
-    i.nombre AS insumo,
-    l.cantidad,
-    l.cantidad_consumida,
-    (l.cantidad - l.cantidad_consumida) AS cantidad_disponible,
-    l.fecha_vencimiento,
-    DATEDIFF(l.fecha_vencimiento, CURDATE()) AS dias_restantes,
-    CASE 
-        WHEN DATEDIFF(l.fecha_vencimiento, CURDATE()) <= 0 THEN 'vencido'
-        WHEN DATEDIFF(l.fecha_vencimiento, CURDATE()) <= 7 THEN 'critico'
-        WHEN DATEDIFF(l.fecha_vencimiento, CURDATE()) <= 30 THEN 'proximo'
-        ELSE 'normal'
-    END AS estado_vencimiento
-FROM lotes l
-JOIN insumos i ON l.id_insumo = i.id_insumo
-WHERE l.estado != 'vencido';
+-- ============================================================
+-- VISTAS DE SOPORTE
+-- ============================================================
+create or replace view public.vista_insumos_estado as
+select
+  i.id,
+  i.nombre,
+  i.unidad_medida,
+  i.stock_actual,
+  i.cantidad_minima,
+  case
+    when i.stock_actual < i.cantidad_minima then 'critico'
+    when i.stock_actual < (i.cantidad_minima * 1.5) then 'bajo'
+    else 'normal'
+  end as estado,
+  case
+    when i.stock_actual < i.cantidad_minima then 'rojo'
+    when i.stock_actual < (i.cantidad_minima * 1.5) then 'amarillo'
+    else 'verde'
+  end as indicador
+from public.insumos_materias_primas i
+where i.activo = true;
+
+create or replace view public.vista_proveedores_activos as
+select
+  p.id,
+  p.nombre_empresa,
+  p.ruc,
+  p.contacto,
+  p.telefono,
+  p.correo,
+  count(ipm.id) as total_insumos
+from public.proveedores p
+left join public.insumos_materias_primas ipm on ipm.proveedor_id = p.id
+where p.activo = true
+group by p.id, p.nombre_empresa, p.ruc, p.contacto, p.telefono, p.correo;
 
 -- ============================================================
 -- FIN DEL SCRIPT

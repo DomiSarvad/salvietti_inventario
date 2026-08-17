@@ -15,6 +15,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _loading = false;
+  bool _passwordVisible = false;
   String? _errorMessage;
 
   Future<void> _submit() async {
@@ -37,9 +38,14 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => InventarioScreen(usuario: usuario)),
       );
-    } catch (error) {
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().toLowerCase();
       setState(() {
-        _errorMessage = error.toString();
+        _errorMessage =
+            message.contains('network') || message.contains('connection')
+            ? 'No se pudo conectar con Supabase. Revisa la conexión o la configuración.'
+            : 'Correo o contraseña incorrecta.';
       });
     } finally {
       if (mounted) {
@@ -103,11 +109,23 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _passwordController,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Contraseña',
-                                prefixIcon: Icon(Icons.lock_outline),
+                                prefixIcon: const Icon(Icons.lock_outline),
+                                suffixIcon: IconButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _passwordVisible = !_passwordVisible;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _passwordVisible
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
                               ),
-                              obscureText: true,
+                              obscureText: !_passwordVisible,
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
                                   return 'Ingrese su contraseña';
@@ -146,11 +164,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 20),
-                      Text(
-                        'Roles soportados: Gerente, Jefe de Producción, Encargado de Almacén, Encargado de Jarabes.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
                     ],
                   ),
                 ),

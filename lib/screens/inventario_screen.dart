@@ -4,6 +4,11 @@ import '../models/insumo_model.dart';
 import '../models/usuario_model.dart';
 import '../services/database_service.dart';
 import '../services/hive_service.dart';
+import 'componentes/formulario_consumo.widget.dart';
+import 'componentes/formulario_salida.widget.dart';
+import 'login_screen.dart';
+import 'componentes/formulario_entrada.widget.dart';
+import 'componentes/formulario_proveedor.widget.dart';
 import 'componentes/grafico_consumo.widget.dart';
 import 'componentes/tarjeta_insumo.widget.dart';
 
@@ -21,10 +26,13 @@ class _InventarioScreenState extends State<InventarioScreen> {
   late Future<int> _pendingEntradasFuture;
   late Future<List<double>> _consumoSemanalFuture;
   final ValueNotifier<bool> _isOffline = ValueNotifier<bool>(false);
+  bool _isSyncing = false;
+  late UsuarioModel _usuarioActual;
 
   @override
   void initState() {
     super.initState();
+    _usuarioActual = widget.usuario;
     _refreshData();
   }
 
@@ -34,20 +42,348 @@ class _InventarioScreenState extends State<InventarioScreen> {
     _consumoSemanalFuture = DatabaseService.fetchConsumoSemanal();
   }
 
-  Color get _statusColor => _isOffline.value ? Colors.orange.shade700 : Colors.green.shade700;
-  String get _statusLabel => _isOffline.value ? 'OFFLINE - MODO LOCAL' : 'ONLINE';
+  Future<void> _sincronizarPendientes() async {
+    if (!mounted) return;
+    setState(() => _isSyncing = true);
+
+    try {
+      await DatabaseService.sincronizarPendientes();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sincronización completada'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      _refreshData();
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error de sincronización: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  bool get _puedeEliminar => DatabaseService.puedeEliminar(_usuarioActual.rol);
+
+  bool get _puedeGestionarInventario => const {
+    'encargado_almacen',
+    'gerente',
+    'jefe_produccion',
+  }.contains(_usuarioActual.rol.toLowerCase());
+
+  bool get _puedeVerJarabes => const {
+    'encargado_jarabes',
+    'gerente',
+    'jefe_produccion',
+  }.contains(_usuarioActual.rol.toLowerCase());
+
+  Color get _statusColor =>
+      _isOffline.value ? Colors.orange.shade700 : Colors.green.shade700;
+  String get _statusLabel =>
+      _isOffline.value ? 'OFFLINE - MODO LOCAL' : 'ONLINE';
+
+  Future<void> _abrirFormularioEntrada() async {
+    await showDialog(
+      context: context,
+      builder: (_) => FormularioEntradaInsumo(usuario: _usuarioActual),
+    );
+    if (mounted) {
+      setState(() => _refreshData());
+    }
+  }
+
+  Future<void> _abrirFormularioSalida() async {
+    await showDialog(
+      context: context,
+      builder: (_) => FormularioSalidaInsumo(usuario: _usuarioActual),
+    );
+    if (mounted) {
+      setState(() => _refreshData());
+    }
+  }
+
+  Future<void> _abrirFormularioConsumo() async {
+    await showDialog(
+      context: context,
+      builder: (_) => FormularioConsumoPlanta(usuario: _usuarioActual),
+    );
+    if (mounted) {
+      setState(() => _refreshData());
+    }
+  }
+
+  Future<void> _abrirFormularioProveedor() async {
+    await showDialog(
+      context: context,
+      builder: (_) => FormularioProveedor(usuario: _usuarioActual),
+    );
+    if (mounted) {
+      setState(() => _refreshData());
+    }
+  }
+
+  Future<void> _mostrarBitacora() async {
+    final resumen = await DatabaseService.fetchInsumos();
+    final criticos = resumen.where((insumo) => insumo.esCritico).length;
+    final observacion = resumen.where((insumo) => insumo.enObservacion).length;
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bitácora rápida'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Usuario: ${_usuarioActual.nombre}'),
+              const SizedBox(height: 8),
+              Text('Rol: ${_usuarioActual.rol}'),
+              const SizedBox(height: 12),
+              _InfoRow(label: 'Inventario crítico', value: '$criticos'),
+              _InfoRow(label: 'En observación', value: '$observacion'),
+              _InfoRow(
+                label: 'Pendientes online',
+                value: _pendingEntradasFuture.toString(),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Toda acción queda registrada en la bitácora y se sincroniza con Supabase cuando haya conexión.',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmarBorradoLogico(
+    String insumoId,
+    String nombreInsumo,
+  ) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Borrado lógico'),
+        content: Text(
+          '¿Desea desactivar $nombreInsumo sin eliminar físicamente el registro?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado != true) return;
+
+    try {
+      final ok = await DatabaseService.softDeleteInsumo(
+        insumoId: insumoId,
+        usuarioId: widget.usuario.id,
+        motivo: 'Borrado lógico por $nombreInsumo',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ok
+                ? 'Insumo desactivado correctamente.'
+                : 'Se registró la acción en modo offline.',
+          ),
+          backgroundColor: ok ? Colors.green : Colors.orange,
+        ),
+      );
+      _refreshData();
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo realizar el borrado lógico: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _mostrarPerfil() async {
+    final nombreController = TextEditingController(text: _usuarioActual.nombre);
+    final emailController = TextEditingController(text: _usuarioActual.email);
+    final telefonoController = TextEditingController(
+      text: _usuarioActual.telefono ?? '',
+    );
+    final fotoController = TextEditingController(
+      text: _usuarioActual.fotoUrl ?? '',
+    );
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final avatarUrl = fotoController.text.trim();
+            return AlertDialog(
+              title: const Text('Mi perfil'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Center(
+                      child: CircleAvatar(
+                        radius: 42,
+                        backgroundColor: Colors.green.shade700,
+                        backgroundImage: avatarUrl.isNotEmpty
+                            ? NetworkImage(avatarUrl)
+                            : null,
+                        child: avatarUrl.isEmpty
+                            ? Text(
+                                _usuarioActual.nombre
+                                    .split(' ')
+                                    .take(2)
+                                    .map((e) => e[0])
+                                    .join()
+                                    .toUpperCase(),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  fontSize: 24,
+                                ),
+                              )
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: nombreController,
+                      decoration: const InputDecoration(labelText: 'Nombre'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: emailController,
+                      decoration: const InputDecoration(labelText: 'Correo'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: telefonoController,
+                      decoration: const InputDecoration(labelText: 'Teléfono'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: fotoController,
+                      decoration: const InputDecoration(
+                        labelText: 'URL de la foto',
+                        hintText: 'https://...',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context, false);
+                    _cerrarSesion();
+                  },
+                  icon: const Icon(Icons.logout_outlined),
+                  label: const Text('Cerrar sesión'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      _usuarioActual = _usuarioActual.copyWith(
+                        nombre: nombreController.text.trim().isNotEmpty
+                            ? nombreController.text.trim()
+                            : _usuarioActual.nombre,
+                        email: emailController.text.trim().isNotEmpty
+                            ? emailController.text.trim()
+                            : _usuarioActual.email,
+                        telefono: telefonoController.text.trim(),
+                        fotoUrl: fotoController.text.trim(),
+                      );
+                    });
+                    Navigator.pop(context, true);
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == true && mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _cerrarSesion() async {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
 
   Widget _buildAppBar() {
+    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
     return AppBar(
       backgroundColor: Colors.white,
       elevation: 0,
+      automaticallyImplyLeading: false,
       centerTitle: false,
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Salvietti', style: TextStyle(color: Colors.green.shade900, fontWeight: FontWeight.bold, fontSize: 22)),
+          Text(
+            'Salvietti',
+            style: TextStyle(
+              color: Colors.green.shade900,
+              fontWeight: FontWeight.bold,
+              fontSize: isDesktop ? 22 : 18,
+            ),
+          ),
           const SizedBox(height: 4),
-          Text('Monitoreo de insumos y consumo proyectado', style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
+          Text(
+            'Monitoreo de insumos y consumo proyectado',
+            style: TextStyle(
+              color: Colors.grey.shade700,
+              fontSize: isDesktop ? 12 : 11,
+            ),
+          ),
         ],
       ),
       actions: [
@@ -56,18 +392,29 @@ class _InventarioScreenState extends State<InventarioScreen> {
           builder: (context, isOffline, child) {
             return Container(
               margin: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: isOffline ? Colors.orange.shade100 : Colors.green.shade100,
+                color: isOffline
+                    ? Colors.orange.shade100
+                    : Colors.green.shade100,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(isOffline ? Icons.cloud_off : Icons.cloud_done, color: _statusColor, size: 18),
+                  Icon(
+                    isOffline ? Icons.cloud_off : Icons.cloud_done,
+                    color: _statusColor,
+                    size: 18,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     _statusLabel,
-                    style: TextStyle(color: _statusColor, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: _statusColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
                   ),
                 ],
               ),
@@ -79,26 +426,92 @@ class _InventarioScreenState extends State<InventarioScreen> {
           icon: Icon(Icons.notifications_none, color: Colors.grey.shade800),
         ),
         const SizedBox(width: 8),
-        Padding(
-          padding: const EdgeInsets.only(right: 18),
-          child: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: Colors.green.shade700,
-                child: const Text('RQ'),
+        if (isDesktop)
+          PopupMenuButton<String>(
+            offset: const Offset(0, 48),
+            onSelected: (value) {
+              if (value == 'perfil') {
+                _mostrarPerfil();
+              } else if (value == 'logout') {
+                _cerrarSesion();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'perfil',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline),
+                    SizedBox(width: 8),
+                    Text('Mi perfil'),
+                  ],
+                ),
               ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(widget.usuario.nombre, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  Text(widget.usuario.rol, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                ],
+              const PopupMenuItem(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_outlined),
+                    SizedBox(width: 8),
+                    Text('Cerrar sesión'),
+                  ],
+                ),
               ),
             ],
+            child: Padding(
+              padding: const EdgeInsets.only(right: 18),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: Colors.green.shade700,
+                    backgroundImage:
+                        _usuarioActual.fotoUrl != null &&
+                            _usuarioActual.fotoUrl!.trim().isNotEmpty
+                        ? NetworkImage(_usuarioActual.fotoUrl!)
+                        : null,
+                    child:
+                        (_usuarioActual.fotoUrl == null ||
+                            _usuarioActual.fotoUrl!.trim().isEmpty)
+                        ? Text(
+                            _usuarioActual.nombre
+                                .split(' ')
+                                .take(2)
+                                .map((e) => e[0])
+                                .join()
+                                .toUpperCase(),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _usuarioActual.nombre,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Text(
+                        _usuarioActual.rol,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -111,11 +524,21 @@ class _InventarioScreenState extends State<InventarioScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Panel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text(
+            'Panel',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
           const SizedBox(height: 24),
-          const _MenuItem(icon: Icons.dashboard, label: 'Dashboard', selected: true),
+          const _MenuItem(
+            icon: Icons.dashboard,
+            label: 'Dashboard',
+            selected: true,
+          ),
           const SizedBox(height: 12),
-          const _MenuItem(icon: Icons.inventory_2_outlined, label: 'Stock Health'),
+          const _MenuItem(
+            icon: Icons.inventory_2_outlined,
+            label: 'Stock Health',
+          ),
           const SizedBox(height: 12),
           const _MenuItem(icon: Icons.trending_up, label: 'Tendencias'),
           const SizedBox(height: 12),
@@ -131,13 +554,24 @@ class _InventarioScreenState extends State<InventarioScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('ALERTAS CRÍTICAS', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red.shade800)),
+                Text(
+                  'ALERTAS CRÍTICAS',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade800,
+                  ),
+                ),
                 const SizedBox(height: 12),
-                const Text('Preformas PET 2L Gas CO2 Insumo', style: TextStyle(fontSize: 13)),
+                const Text(
+                  'Preformas PET 2L Gas CO2 Insumo',
+                  style: TextStyle(fontSize: 13),
+                ),
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: () {},
-                  style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.red.shade700,
+                  ),
                   child: const Text('RESOLVER AHORA'),
                 ),
               ],
@@ -149,29 +583,124 @@ class _InventarioScreenState extends State<InventarioScreen> {
   }
 
   Widget _buildCentralPanel(List<InsumoModel> insumos) {
-    final tarjetas = insumos.where((item) => item.activo).toList();
+    final tarjetas = insumos.where((item) => item.activo).where((item) {
+      if (!_puedeVerJarabes && item.nombre.toLowerCase().contains('jarabe')) {
+        return false;
+      }
+      return true;
+    }).toList();
+    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
+    final criticos = tarjetas.where((item) => item.esCritico).length;
+    final observaciones = tarjetas.where((item) => item.enObservacion).length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             Expanded(
-              child: Text('Estado de Planta', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
+              child: Text(
+                'Estado de Planta',
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (_puedeGestionarInventario)
+                  FilledButton.icon(
+                    onPressed: _abrirFormularioEntrada,
+                    icon: const Icon(Icons.add_box_rounded),
+                    label: const Text('Entrada'),
+                  ),
+                if (_puedeGestionarInventario)
+                  FilledButton.icon(
+                    onPressed: _abrirFormularioSalida,
+                    icon: const Icon(Icons.output_rounded),
+                    label: const Text('Salida'),
+                  ),
+                FilledButton.icon(
+                  onPressed: _abrirFormularioConsumo,
+                  icon: const Icon(Icons.local_shipping_rounded),
+                  label: const Text('Consumo'),
+                ),
+                if (_puedeGestionarInventario)
+                  FilledButton.icon(
+                    onPressed: _abrirFormularioProveedor,
+                    icon: const Icon(Icons.business_rounded),
+                    label: const Text('Proveedor'),
+                  ),
+                FilledButton.icon(
+                  onPressed: _mostrarBitacora,
+                  icon: const Icon(Icons.history_edu_rounded),
+                  label: const Text('Bitácora'),
+                ),
+              ],
+            ),
+            const SizedBox(width: 12),
             FilledButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.add),
-              label: const Text('Registrar Movimiento'),
+              onPressed: _isSyncing ? null : _sincronizarPendientes,
+              icon: const Icon(Icons.sync),
+              label: Text(_isSyncing ? 'Sincronizando...' : 'Sincronizar'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.orange.shade700,
+                foregroundColor: Colors.white,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 6),
-        Text('Monitoreo de insumos y consumo proyectado • ${DateTime.now().day} ${_monthName(DateTime.now().month)} ${DateTime.now().year}', style: const TextStyle(color: Colors.grey)),
-        const SizedBox(height: 26),
+        Text(
+          'Monitoreo de insumos y consumo proyectado • ${DateTime.now().day} ${_monthName(DateTime.now().month)} ${DateTime.now().year}',
+          style: const TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 22),
         Wrap(
           spacing: 16,
           runSpacing: 16,
-          children: tarjetas.map((insumo) => SizedBox(width: 320, child: TarjetaInsumoWidget(insumo: insumo))).toList(),
+          children: [
+            _ResumenCard(
+              label: 'Críticos',
+              valor: '$criticos',
+              color: Colors.red,
+              icon: Icons.warning_amber_rounded,
+            ),
+            _ResumenCard(
+              label: 'Observación',
+              valor: '$observaciones',
+              color: Colors.orange,
+              icon: Icons.visibility_outlined,
+            ),
+            _ResumenCard(
+              label: 'Total insumos',
+              valor: '${tarjetas.length}',
+              color: Colors.green,
+              icon: Icons.inventory_2_outlined,
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: tarjetas
+              .map(
+                (insumo) => SizedBox(
+                  width: isDesktop ? 320 : double.infinity,
+                  child: TarjetaInsumoWidget(
+                    insumo: insumo,
+                    canDelete: _puedeEliminar,
+                    onDelete: _puedeEliminar
+                        ? () =>
+                              _confirmarBorradoLogico(insumo.id, insumo.nombre)
+                        : null,
+                  ),
+                ),
+              )
+              .toList(),
         ),
       ],
     );
@@ -185,7 +714,11 @@ class _InventarioScreenState extends State<InventarioScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(28),
         boxShadow: [
-          BoxShadow(color: Colors.grey.shade200, blurRadius: 18, offset: const Offset(0, 8)),
+          BoxShadow(
+            color: Colors.grey.shade200,
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
         ],
       ),
       child: Column(
@@ -200,13 +733,29 @@ class _InventarioScreenState extends State<InventarioScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('EFICIENCIA', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'EFICIENCIA',
+                      style: TextStyle(
+                        color: Colors.grey,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 8),
-                    Text('${eficiencia.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
+                    Text(
+                      '${eficiencia.toStringAsFixed(1)}%',
+                      style: const TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              Icon(Icons.show_chart_outlined, size: 40, color: Colors.green.shade700),
+              Icon(
+                Icons.show_chart_outlined,
+                size: 40,
+                color: Colors.green.shade700,
+              ),
             ],
           ),
         ],
@@ -215,65 +764,110 @@ class _InventarioScreenState extends State<InventarioScreen> {
   }
 
   static String _monthName(int month) {
-    const names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const names = [
+      'Ene',
+      'Feb',
+      'Mar',
+      'Abr',
+      'May',
+      'Jun',
+      'Jul',
+      'Ago',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dic',
+    ];
     return names[month - 1];
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
+
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
-      appBar: PreferredSize(preferredSize: const Size.fromHeight(92), child: _buildAppBar()),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(92),
+        child: _buildAppBar(),
+      ),
       body: FutureBuilder<List<InsumoModel>>(
         future: _insumosFuture,
         builder: (context, snapshot) {
           final insumos = snapshot.data ?? [];
 
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildSideMenu(),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: Row(
+          final content = Padding(
+            padding: EdgeInsets.fromLTRB(
+              isDesktop ? 24 : 16,
+              16,
+              isDesktop ? 24 : 16,
+              16,
+            ),
+            child: Column(
+              children: [
+                Expanded(
+                  child: isDesktop
+                      ? Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            _buildSideMenu(),
+                            const SizedBox(width: 16),
                             Expanded(child: _buildCentralPanel(insumos)),
-                            const SizedBox(width: 22),
+                            const SizedBox(width: 16),
                             FutureBuilder<List<double>>(
                               future: _consumoSemanalFuture,
                               builder: (context, chartSnapshot) {
-                                final valores = chartSnapshot.data ?? [3.0, 5.2, 4.5, 6.0, 4.8, 5.0, 3.3];
-                                return SizedBox(width: 420, child: _buildRightPanel(valores));
+                                final valores =
+                                    chartSnapshot.data ??
+                                    [3.0, 5.2, 4.5, 6.0, 4.8, 5.0, 3.3];
+                                return SizedBox(
+                                  width: 420,
+                                  child: _buildRightPanel(valores),
+                                );
                               },
                             ),
                           ],
+                        )
+                      : SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildCentralPanel(insumos),
+                              const SizedBox(height: 18),
+                              FutureBuilder<List<double>>(
+                                future: _consumoSemanalFuture,
+                                builder: (context, chartSnapshot) {
+                                  final valores =
+                                      chartSnapshot.data ??
+                                      [3.0, 5.2, 4.5, 6.0, 4.8, 5.0, 3.3];
+                                  return _buildRightPanel(valores);
+                                },
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      FutureBuilder<int>(
-                        future: _pendingEntradasFuture,
-                        builder: (context, pendingSnapshot) {
-                          final pendientes = pendingSnapshot.data ?? 0;
-                          return Align(
-                            alignment: Alignment.centerRight,
-                            child: Text(
-                              '${_statusLabel == 'OFFLINE - MODO LOCAL' ? 'Modo Off-line activo' : 'Conexión Online estable'} • Pendientes: $pendientes',
-                              style: TextStyle(color: Colors.grey.shade700),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                FutureBuilder<int>(
+                  future: _pendingEntradasFuture,
+                  builder: (context, pendingSnapshot) {
+                    final pendientes = pendingSnapshot.data ?? 0;
+                    return Align(
+                      alignment: isDesktop
+                          ? Alignment.centerRight
+                          : Alignment.center,
+                      child: Text(
+                        '${_statusLabel == 'OFFLINE - MODO LOCAL' ? 'Modo Off-line activo' : 'Conexión Online estable'} • Pendientes: $pendientes',
+                        style: TextStyle(color: Colors.grey.shade700),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           );
+
+          return content;
         },
       ),
     );
@@ -285,7 +879,11 @@ class _MenuItem extends StatelessWidget {
   final String label;
   final bool selected;
 
-  const _MenuItem({required this.icon, required this.label, this.selected = false});
+  const _MenuItem({
+    required this.icon,
+    required this.label,
+    this.selected = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -298,6 +896,80 @@ class _MenuItem extends StatelessWidget {
         foregroundColor: selected ? Colors.white : Colors.black87,
         elevation: selected ? 2 : 0,
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+      ),
+    );
+  }
+}
+
+class _ResumenCard extends StatelessWidget {
+  final String label;
+  final String valor;
+  final Color color;
+  final IconData icon;
+
+  const _ResumenCard({
+    required this.label,
+    required this.valor,
+    required this.color,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 150,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: color.withValues(alpha: 0.12),
+            child: Icon(icon, color: color),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                valor,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }

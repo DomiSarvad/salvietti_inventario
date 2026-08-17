@@ -1,4 +1,3 @@
-# Sistema de Gestión de Inventario - Salvietti
 
 ## Descripción
 Sistema web progresivo (PWA) para la gestión integral del inventario de materia prima e insumos de la empresa Salvietti. 
@@ -15,11 +14,11 @@ Sistema web progresivo (PWA) para la gestión integral del inventario de materia
 - ✅ Soporte multiusuario con roles
 
 ## Stack Tecnológico
-- **Backend**: PHP (Laravel 10)
-- **Frontend**: HTML5, CSS3, JavaScript Vanilla
-- **Base de Datos**: MySQL 8.0+
-- **Servidor**: Apache/Nginx
-- **Offline**: Service Worker + IndexedDB
+- **Frontend/App**: Flutter + Dart
+- **Base de Datos**: Supabase + PostgreSQL
+- **Autenticación**: Supabase Auth
+- **Persistencia local**: Hive + sincronización offline
+- **Plataformas**: Android, Windows, Web y móvil híbrido
 
 ## Estructura de Carpetas
 

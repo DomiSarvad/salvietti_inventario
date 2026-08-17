@@ -59,7 +59,9 @@ class InsumoModel {
       cantidadMinima: (map['cantidad_minima'] ?? 0).toDouble(),
       puntoRetorno: (map['punto_retorno'] ?? 0).toDouble(),
       ultimoMovimiento: ultimoMovimiento,
-      activo: map['activo'] == null ? true : map['activo'] == true || map['activo'] == 'true',
+      activo: map['activo'] == null
+          ? true
+          : map['activo'] == true || map['activo'] == 'true',
     );
   }
 
@@ -83,20 +85,54 @@ class InsumoModel {
     };
   }
 
-  double get diasRestantes {
+  double get consumoDiarioPromedio {
     if (consumoPromedio30 <= 0) {
+      return 0;
+    }
+    return consumoPromedio30 / 30;
+  }
+
+  double get diasRestantesStock {
+    if (consumoDiarioPromedio <= 0) {
       return double.infinity;
     }
-    return stockActual / consumoPromedio30;
+    return stockActual / consumoDiarioPromedio;
   }
 
-  bool get esCritico {
-    return stockActual <= cantidadMinima || diasRestantes <= 3;
+  double get diasHastaVencimiento {
+    if (fechaVencimiento == null) {
+      return double.infinity;
+    }
+    final diff = fechaVencimiento!.difference(DateTime.now());
+    return diff.inMinutes / (60 * 24);
   }
 
-  bool get enObservacion {
-    return !esCritico && stockActual <= puntoRetorno;
+  StockNivel get nivelStock {
+    final criticoPorConsumo = diasRestantesStock < 3;
+    final criticoPorVencimiento = diasHastaVencimiento < 7;
+    final observacionPorConsumo =
+        diasRestantesStock >= 3 && diasRestantesStock <= 7;
+    final observacionPorVencimiento =
+        diasHastaVencimiento >= 7 && diasHastaVencimiento <= 15;
+
+    if (stockActual <= cantidadMinima ||
+        criticoPorConsumo ||
+        criticoPorVencimiento) {
+      return StockNivel.critico;
+    }
+
+    if (stockActual <= puntoRetorno ||
+        observacionPorConsumo ||
+        observacionPorVencimiento) {
+      return StockNivel.observacion;
+    }
+
+    return StockNivel.seguro;
   }
+
+  bool get esCritico => nivelStock == StockNivel.critico;
+
+  bool get enObservacion => nivelStock == StockNivel.observacion;
 
   bool get rotacionLenta {
     if (ultimoMovimiento == null) {
@@ -106,3 +142,5 @@ class InsumoModel {
     return diferencia.inDays >= 10;
   }
 }
+
+enum StockNivel { critico, observacion, seguro }
